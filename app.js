@@ -1,4 +1,5 @@
 const API_URL = "https://script.google.com/macros/s/AKfycbxQ-4fs8MhOOVIPG_nW8JG2uotJcBruCmJ6RdMkeYJo91z2Tt3k6lgzHc0l8RZHBRtQsA/exec";
+const INVENTORY_CACHE_KEY = "equipment-inventory-cache-v1";
 
 const FALLBACK_COLUMNS = [
   "Equipment_ID",
@@ -48,6 +49,7 @@ let audioContext = null;
 document.addEventListener("DOMContentLoaded", async () => {
   setupMobileDockVisibility();
   bindInterfaceEvents();
+  restoreInventoryCache();
   initScanner();
   await loadInventoryData();
   await handleInitialDeepLink();
@@ -268,7 +270,10 @@ async function loadInventoryData(options = {}) {
   }
 
   try {
-    const result = await fetchJson(`${API_URL}?action=READ_ALL`);
+    const requestUrl = new URL(API_URL);
+    requestUrl.searchParams.set("action", "READ_ALL");
+    requestUrl.searchParams.set("_", Date.now().toString());
+    const result = await fetchJson(requestUrl.toString(), {}, 15000, 1);
     if (result.status !== "success" || !Array.isArray(result.data)) {
       throw new Error(result.message || "The inventory response was invalid.");
     }
@@ -282,16 +287,58 @@ async function loadInventoryData(options = {}) {
     populateCategoryFilter();
     renderInventory();
     renderHistory();
+    persistInventoryCache();
     setConnectionState("Sheet live", "online");
     document.getElementById("last-updated").textContent = `Updated ${formatTime(new Date())}`;
   } catch (error) {
     console.error("Inventory load failed:", error);
-    setConnectionState("Connection issue", "offline");
-    if (inventoryCache.length === 0) renderTableMessage("Inventory could not be loaded. Try Refresh.", true);
-    if (!options.quiet) showToast(error.message || "Inventory could not be loaded.", "!", true);
+    const hasCachedInventory = inventoryCache.length > 0;
+    setConnectionState(hasCachedInventory ? "Offline cache" : "Connection issue", "offline");
+    if (!hasCachedInventory) renderTableMessage("Inventory could not be loaded. Check the Apps Script deployment, then try Refresh.", true);
+    if (!options.quiet) {
+      showToast(
+        hasCachedInventory ? "The Sheet is unavailable. Showing the last saved inventory." : (error.message || "Inventory could not be loaded."),
+        "!",
+        true
+      );
+    }
   } finally {
     refreshButton.disabled = false;
     refreshButton.classList.remove("is-loading");
+  }
+}
+
+function persistInventoryCache() {
+  try {
+    localStorage.setItem(INVENTORY_CACHE_KEY, JSON.stringify({
+      savedAt: new Date().toISOString(),
+      data: inventoryCache
+    }));
+  } catch (error) {
+    console.warn("Inventory cache could not be saved:", error);
+  }
+}
+
+function restoreInventoryCache() {
+  try {
+    const cached = JSON.parse(localStorage.getItem(INVENTORY_CACHE_KEY) || "null");
+    if (!cached || !Array.isArray(cached.data) || cached.data.length === 0) return false;
+
+    inventoryCache = cached.data;
+    columnOrder = collectColumnOrder(inventoryCache);
+    renderStatusCounts();
+    populateCategoryFilter();
+    renderInventory();
+    renderHistory();
+    setConnectionState("Checking Sheet", "connecting");
+    const savedAt = new Date(cached.savedAt);
+    document.getElementById("last-updated").textContent = Number.isNaN(savedAt.getTime())
+      ? "Saved inventory available"
+      : `Saved ${formatTime(savedAt)}`;
+    return true;
+  } catch (error) {
+    console.warn("Inventory cache could not be restored:", error);
+    return false;
   }
 }
 
@@ -1355,7 +1402,7 @@ async function findAndOpenEquipment(equipmentId) {
 
   if (!item) {
     try {
-      const result = await fetchJson(`${API_URL}?action=READ_ONE&equipmentId=${encodeURIComponent(equipmentId)}`);
+      const result = await fetchJson(`${API_URL}?action=READ_ONE&equipmentId=${encodeURIComponent(equipmentId)}`, {}, 15000, 1);
       if (result.status === "success" && result.data) item = result.data;
     } catch (error) {
       console.error("Equipment lookup failed:", error);
@@ -1397,19 +1444,34 @@ function setConnectionState(label, state) {
   dot.classList.toggle("is-offline", state === "offline");
 }
 
-async function fetchJson(url, options = {}, timeout = 15000) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeout);
-  try {
-    const response = await fetch(url, { ...options, signal: controller.signal });
-    if (!response.ok) throw new Error(`Inventory service returned HTTP ${response.status}.`);
-    return await response.json();
-  } catch (error) {
-    if (error.name === "AbortError") throw new Error("The inventory service took too long to respond.");
-    throw error;
-  } finally {
-    clearTimeout(timeoutId);
+async function fetchJson(url, options = {}, timeout = 15000, retries = 0) {
+  let lastError;
+
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    try {
+      const response = await fetch(url, {
+        cache: "no-store",
+        credentials: "omit",
+        redirect: "follow",
+        ...options,
+        signal: controller.signal
+      });
+      if (!response.ok) throw new Error(`Inventory service returned HTTP ${response.status}.`);
+      return await response.json();
+    } catch (error) {
+      if (error.name === "AbortError") lastError = new Error("The inventory service took too long to respond.");
+      else if (error instanceof TypeError) lastError = new Error("The Google Apps Script inventory service could not be reached.");
+      else lastError = error;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    if (attempt < retries) await new Promise((resolve) => setTimeout(resolve, 900 * (attempt + 1)));
   }
+
+  throw lastError || new Error("The inventory service could not be reached.");
 }
 
 function normalizeEquipmentId(value) {
