@@ -17,6 +17,7 @@ let columnOrder = [...FALLBACK_COLUMNS];
 let visibleInventory = [];
 let selectedIds = new Set();
 let activeStatus = "All";
+let activeCategory = "All";
 let searchQuery = "";
 let currentView = "inventory";
 let equipmentFormMode = "edit";
@@ -31,11 +32,12 @@ let lastScannedId = "";
 let lastScanTime = 0;
 let audioContext = null;
 
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
   setupMobileDockVisibility();
   bindInterfaceEvents();
   initScanner();
-  loadInventoryData();
+  await loadInventoryData();
+  await handleInitialDeepLink();
 });
 
 function setupMobileDockVisibility() {
@@ -44,8 +46,10 @@ function setupMobileDockVisibility() {
 
   const mobileQuery = window.matchMedia("(max-width: 900px)");
   const syncDock = () => {
-    dock.hidden = !mobileQuery.matches;
+    document.documentElement.classList.toggle("is-mobile-layout", mobileQuery.matches);
     dock.setAttribute("aria-hidden", String(!mobileQuery.matches));
+    if (mobileQuery.matches) dock.removeAttribute("inert");
+    else dock.setAttribute("inert", "");
   };
 
   syncDock();
@@ -74,16 +78,19 @@ function bindInterfaceEvents() {
     renderInventory();
   });
 
+  document.getElementById("status-filter").addEventListener("change", (event) => {
+    setActiveStatus(event.target.value);
+  });
+
+  document.getElementById("category-filter").addEventListener("change", (event) => {
+    activeCategory = event.target.value;
+    renderInventory();
+  });
+
   document.getElementById("status-tabs").addEventListener("click", (event) => {
     const tab = event.target.closest("[data-status]");
     if (!tab) return;
-    activeStatus = tab.dataset.status;
-    document.querySelectorAll(".status-tab").forEach((button) => {
-      const isActive = button === tab;
-      button.classList.toggle("is-active", isActive);
-      button.setAttribute("aria-selected", String(isActive));
-    });
-    renderInventory();
+    setActiveStatus(tab.dataset.status);
   });
 
   document.getElementById("inventory-table-head").addEventListener("change", (event) => {
@@ -106,13 +113,16 @@ function bindInterfaceEvents() {
   });
 
   document.getElementById("inventory-table-body").addEventListener("click", (event) => {
+    const qrButton = event.target.closest(".row-qr-button");
     const actionButton = event.target.closest(".row-action-button");
     const interactiveControl = event.target.closest("button, input, a, label");
     const row = event.target.closest("tr[data-equipment-id]");
-    const equipmentId = actionButton?.dataset.equipmentId || (!interactiveControl && row?.dataset.equipmentId);
+    const equipmentId = qrButton?.dataset.equipmentId || actionButton?.dataset.equipmentId || (!interactiveControl && row?.dataset.equipmentId);
     if (!equipmentId) return;
     const item = inventoryCache.find((candidate) => safeValue(candidate.Equipment_ID) === equipmentId);
-    if (item) openEquipmentModal("edit", item);
+    if (!item) return;
+    if (qrButton) openQrLabels([item], "single");
+    else openEquipmentModal("edit", item);
   });
 
   document.getElementById("inventory-table-body").addEventListener("keydown", (event) => {
@@ -250,6 +260,7 @@ async function loadInventoryData(options = {}) {
       [...selectedIds].filter((id) => inventoryCache.some((item) => safeValue(item.Equipment_ID) === id))
     );
     renderStatusCounts();
+    populateCategoryFilter();
     renderInventory();
     renderHistory();
     setConnectionState("Sheet live", "online");
@@ -290,13 +301,40 @@ function renderStatusCounts() {
   document.getElementById("sidebar-item-count").textContent = inventoryCache.length;
 }
 
+function setActiveStatus(status) {
+  const allowedStatuses = ["All", "Available", "In Use", "Maintenance", "Missing"];
+  activeStatus = allowedStatuses.includes(status) ? status : "All";
+  document.getElementById("status-filter").value = activeStatus;
+  document.querySelectorAll(".status-tab").forEach((button) => {
+    const isActive = button.dataset.status === activeStatus;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-selected", String(isActive));
+  });
+  renderInventory();
+}
+
+function populateCategoryFilter() {
+  const select = document.getElementById("category-filter");
+  const categories = [...new Set(
+    inventoryCache.map((item) => safeValue(item.Category)).filter(Boolean)
+  )].sort((a, b) => a.localeCompare(b));
+
+  const options = [new Option("All categories", "All")];
+  categories.forEach((category) => options.push(new Option(category, category)));
+  select.replaceChildren(...options);
+  if (activeCategory !== "All" && !categories.includes(activeCategory)) activeCategory = "All";
+  select.value = activeCategory;
+}
+
 function renderInventory() {
   visibleInventory = inventoryCache.filter((item) => {
     const matchesStatus = activeStatus === "All" || safeValue(item.Status) === activeStatus;
-    const matchesSearch = !searchQuery || Object.values(item).some((value) =>
-      String(value ?? "").toLowerCase().includes(searchQuery)
+    const matchesCategory = activeCategory === "All" || safeValue(item.Category) === activeCategory;
+    const searchFields = ["Equipment_ID", "Name", "Category", "Location", "Assigned_To"];
+    const matchesSearch = !searchQuery || searchFields.some((field) =>
+      String(item[field] ?? "").toLowerCase().includes(searchQuery)
     );
-    return matchesStatus && matchesSearch;
+    return matchesStatus && matchesCategory && matchesSearch;
   });
 
   renderTableHead();
@@ -408,7 +446,7 @@ function renderTableBody() {
   body.replaceChildren();
 
   if (visibleInventory.length === 0) {
-    renderTableMessage(searchQuery || activeStatus !== "All" ? "No equipment matches these filters." : "No equipment records found.");
+    renderTableMessage(searchQuery || activeStatus !== "All" || activeCategory !== "All" ? "No equipment matches these filters." : "No equipment records found.");
     return;
   }
 
@@ -455,13 +493,22 @@ function renderTableBody() {
     const actionCell = document.createElement("td");
     actionCell.className = "action-cell";
     actionCell.dataset.label = "Actions";
+    const actionGroup = document.createElement("div");
+    actionGroup.className = "row-actions";
+    const qrButton = document.createElement("button");
+    qrButton.type = "button";
+    qrButton.className = "row-qr-button";
+    qrButton.dataset.equipmentId = equipmentId;
+    qrButton.setAttribute("aria-label", `QR Label ${equipmentId || "equipment"}`);
+    qrButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2v2h-2zM18 14h2v6h-6v-2M16 18h2"></path></svg><span>QR Label</span>';
     const actionButton = document.createElement("button");
     actionButton.type = "button";
     actionButton.className = "row-action-button";
     actionButton.dataset.equipmentId = equipmentId;
     actionButton.setAttribute("aria-label", `Edit ${equipmentId || "equipment"}`);
     actionButton.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"></circle><circle cx="19" cy="12" r="1" fill="currentColor" stroke="none"></circle></svg>';
-    actionCell.appendChild(actionButton);
+    actionGroup.append(qrButton, actionButton);
+    actionCell.appendChild(actionGroup);
     row.appendChild(actionCell);
     body.appendChild(row);
   });
@@ -542,6 +589,7 @@ function renderEquipmentFields(item) {
     const field = document.createElement("div");
     field.className = "dynamic-field";
     const normalizedColumn = column.toLowerCase();
+    field.dataset.columnKey = normalizedColumn.replace(/[^a-z0-9]+/g, "-");
     if (/notes|description|remarks|details/.test(normalizedColumn)) field.classList.add("is-wide");
 
     const label = document.createElement("label");
@@ -661,50 +709,62 @@ function openSelectedQrLabels() {
     showToast("Select one or more equipment rows to create labels.", "!", true);
     return;
   }
-  openQrLabels(selectedItems);
+  openQrLabels(selectedItems, "bulk");
 }
 
-function openQrLabels(items) {
+function openQrLabels(items, mode = items.length === 1 ? "single" : "bulk") {
   if (typeof QRCode === "undefined") {
-    showToast("The local QR generator could not be loaded.", "!", true);
+    showToast("The QR generator could not be loaded.", "!", true);
     return;
   }
 
-  const grid = document.getElementById("qr-label-grid");
+  const grid = document.getElementById("print-area");
   grid.replaceChildren();
+  grid.classList.toggle("is-single", mode === "single");
+  document.getElementById("qr-modal-title").textContent = mode === "single" ? "Equipment QR label" : "Printable QR label sheet";
+  document.getElementById("qr-modal-description").textContent = mode === "single"
+    ? "Preview, download, or print this equipment sticker."
+    : `Ready to print ${items.length} selected equipment labels.`;
+  document.getElementById("print-labels-button").lastChild.textContent = mode === "single" ? "Print Label" : "Print Sheet";
   previouslyFocusedElement = document.activeElement;
 
   items.forEach((item) => {
     const equipmentId = safeValue(item.Equipment_ID);
+    const deepLink = getEquipmentDeepLink(equipmentId);
     const label = document.createElement("article");
     label.className = "qr-label";
+    label.dataset.deepLink = deepLink;
 
     const brand = document.createElement("span");
     brand.className = "qr-label-brand";
-    brand.textContent = "INVENTORY · Equipment";
+    brand.textContent = "EquipTrack";
+    const title = document.createElement("h3");
+    title.textContent = safeValue(item.Name, "Unnamed equipment");
+    const category = document.createElement("p");
+    category.className = "qr-label-category";
+    category.textContent = safeValue(item.Category, "Uncategorized");
     const qrCanvas = document.createElement("div");
     qrCanvas.className = "qr-canvas";
-    const title = document.createElement("h3");
-    title.textContent = equipmentId;
-    const description = document.createElement("p");
-    description.textContent = [safeValue(item.Name), safeValue(item.Location)].filter(Boolean).join(" · ");
+    const equipmentCode = document.createElement("strong");
+    equipmentCode.className = "qr-equipment-id";
+    equipmentCode.textContent = equipmentId;
     const downloadButton = document.createElement("button");
     downloadButton.type = "button";
     downloadButton.className = "download-qr-button";
     downloadButton.textContent = "Download PNG";
     downloadButton.addEventListener("click", () => downloadQrPng(qrCanvas, equipmentId));
 
-    label.append(brand, qrCanvas, title, description, downloadButton);
+    label.append(brand, title, category, qrCanvas, equipmentCode, downloadButton);
     grid.appendChild(label);
 
     try {
       new QRCode(qrCanvas, {
-        text: equipmentId,
-        width: 168,
-        height: 168,
+        text: deepLink,
+        width: 192,
+        height: 192,
         colorDark: "#151515",
         colorLight: "#ffffff",
-        correctLevel: QRCode.CorrectLevel.M
+        correctLevel: QRCode.CorrectLevel.H
       });
     } catch (error) {
       qrCanvas.textContent = error.message;
@@ -713,6 +773,14 @@ function openQrLabels(items) {
   });
 
   openModal(document.getElementById("qr-modal"));
+}
+
+function getEquipmentDeepLink(equipmentId) {
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.hash = "";
+  url.searchParams.set("id", equipmentId);
+  return url.toString();
 }
 
 // Dependency-free QR encoder for short equipment IDs (QR Version 1-L, up to 17 UTF-8 bytes).
@@ -1017,6 +1085,24 @@ function handleManualLookup(event) {
   }
   input.value = equipmentId;
   findAndOpenEquipment(equipmentId);
+}
+
+async function handleInitialDeepLink() {
+  const requestedId = new URLSearchParams(window.location.search).get("id");
+  if (!requestedId) return;
+
+  const equipmentId = normalizeEquipmentId(requestedId);
+  if (!equipmentId) {
+    showToast("The equipment link is invalid.", "!", true);
+    return;
+  }
+
+  switchView("scanner");
+  await fetchAndOpenModal(equipmentId);
+}
+
+async function fetchAndOpenModal(equipmentId) {
+  return findAndOpenEquipment(normalizeEquipmentId(equipmentId));
 }
 
 async function findAndOpenEquipment(equipmentId) {

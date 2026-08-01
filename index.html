@@ -11,6 +11,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script>window.QRCode || document.write('<script src="qrcode.min.js"><\/script>');</script>
   <link rel="stylesheet" href="style.css" />
 </head>
 
@@ -107,6 +109,22 @@
             <input id="inventory-search" type="search" placeholder="Search equipment, location, person…" autocomplete="off" />
             <kbd>/</kbd>
           </div>
+          <div class="filter-controls" aria-label="Inventory filters">
+            <label class="filter-field" for="status-filter">
+              <span>Status</span>
+              <select id="status-filter">
+                <option value="All">All statuses</option>
+                <option value="Available">Available</option>
+                <option value="In Use">In Use</option>
+                <option value="Maintenance">Maintenance</option>
+                <option value="Missing">Missing</option>
+              </select>
+            </label>
+            <label class="filter-field" for="category-filter">
+              <span>Category</span>
+              <select id="category-filter"><option value="All">All categories</option></select>
+            </label>
+          </div>
           <div class="toolbar-actions">
             <button class="button button-secondary" id="refresh-data-button" type="button">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6 8a7 7 0 0 1 12-2l2 6M18 16a7 7 0 0 1-12 0l-2-4" /></svg>
@@ -114,7 +132,7 @@
             </button>
             <button class="button button-secondary" id="create-qr-button" type="button" disabled>
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2v2h-2zM18 14h2v6h-6v-2M16 18h2" /></svg>
-              <span>QR labels</span>
+              <span>Print selected labels</span>
             </button>
             <button class="button button-secondary" id="export-csv-button" type="button">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 20h14" /></svg>
@@ -239,13 +257,13 @@
     <div class="modal-backdrop" data-close-qr-modal></div>
     <div class="modal-panel modal-panel-labels" role="document">
       <header class="modal-header">
-        <div><span class="modal-kicker">Label generator</span><h2 id="qr-modal-title">QR equipment labels</h2><p>Print labels or download an individual QR code as PNG.</p></div>
+        <div><span class="modal-kicker">Label generator</span><h2 id="qr-modal-title">QR equipment labels</h2><p id="qr-modal-description">Print labels or download an individual QR code as PNG.</p></div>
         <button class="icon-button" type="button" data-close-qr-modal aria-label="Close QR labels"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l14 14M19 5 5 19" /></svg></button>
       </header>
-      <div class="qr-label-grid" id="qr-label-grid"></div>
+      <div class="qr-label-grid" id="print-area"></div>
       <footer class="modal-actions qr-modal-actions">
         <button class="button button-secondary" type="button" data-close-qr-modal>Close</button>
-        <button class="button button-primary" id="print-labels-button" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9V3h12v6M6 18H4v-7h16v7h-2M7 15h10v6H7z" /></svg>Print labels</button>
+        <button class="button button-primary" id="print-labels-button" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9V3h12v6M6 18H4v-7h16v7h-2M7 15h10v6H7z" /></svg>Print Sheet</button>
       </footer>
     </div>
   </div>
@@ -257,7 +275,6 @@
   <datalist id="status-options"><option value="Available"></option><option value="In Use"></option><option value="Maintenance"></option><option value="Missing"></option></datalist>
   <datalist id="condition-options"><option value="New"></option><option value="Good"></option><option value="Damaged"></option><option value="Broken"></option></datalist>
 
-  <script src="qrcode.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
