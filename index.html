@@ -11,8 +11,16 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-  <script>window.QRCode || document.write('<script src="qrcode.min.js"><\/script>');</script>
+  <!-- Keep QR generation available even when a production host blocks the CDN. -->
+  <script src="./qrcode.min.js"></script>
+  <script>
+    if (!window.QRCode) {
+      const qrFallback = document.createElement("script");
+      qrFallback.src = "https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js";
+      qrFallback.crossOrigin = "anonymous";
+      document.head.appendChild(qrFallback);
+    }
+  </script>
   <link rel="stylesheet" href="style.css" />
 </head>
 

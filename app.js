@@ -36,6 +36,7 @@ let toastTimer = null;
 let activeQrItems = [];
 let activeQrMode = "bulk";
 let activeLabelFields = ["Equipment_ID", "Name"];
+let qrLibraryPromise = null;
 
 let html5QrcodeScanner = null;
 let scannerStateObserver = null;
@@ -730,8 +731,8 @@ function openSelectedQrLabels() {
   openQrLabels(selectedItems, "bulk");
 }
 
-function openQrLabels(items, mode = items.length === 1 ? "single" : "bulk") {
-  if (typeof QRCode === "undefined") {
+async function openQrLabels(items, mode = items.length === 1 ? "single" : "bulk") {
+  if (!(await ensureQrCodeLibrary())) {
     showToast("The QR generator could not be loaded.", "!", true);
     return;
   }
@@ -751,6 +752,49 @@ function openQrLabels(items, mode = items.length === 1 ? "single" : "bulk") {
   previouslyFocusedElement = document.activeElement;
   renderQrLabelPreview();
   openModal(document.getElementById("qr-modal"));
+}
+
+function ensureQrCodeLibrary() {
+  if (typeof window.QRCode === "function") return Promise.resolve(true);
+  if (qrLibraryPromise) return qrLibraryPromise;
+
+  const sources = [
+    new URL("./qrcode.min.js", window.location.href).toString(),
+    "https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"
+  ];
+
+  qrLibraryPromise = new Promise((resolve) => {
+    const loadSource = (index) => {
+      if (typeof window.QRCode === "function") {
+        resolve(true);
+        return;
+      }
+      if (index >= sources.length) {
+        resolve(false);
+        return;
+      }
+
+      const script = document.createElement("script");
+      script.src = sources[index];
+      script.async = true;
+      script.onload = () => {
+        if (typeof window.QRCode === "function") resolve(true);
+        else {
+          script.remove();
+          loadSource(index + 1);
+        }
+      };
+      script.onerror = () => {
+        script.remove();
+        loadSource(index + 1);
+      };
+      document.head.appendChild(script);
+    };
+
+    loadSource(0);
+  });
+
+  return qrLibraryPromise;
 }
 
 function renderQrLabelPreview() {
@@ -918,7 +962,7 @@ function createQrLabel(item, preset, orientation) {
       height: 256,
       colorDark: "#151515",
       colorLight: "#ffffff",
-      correctLevel: QRCode.CorrectLevel.H
+      correctLevel: QRCode.CorrectLevel.M
     });
   } catch (error) {
     qrCanvas.textContent = error.message;
