@@ -32,10 +32,29 @@ let lastScanTime = 0;
 let audioContext = null;
 
 document.addEventListener("DOMContentLoaded", () => {
+  setupMobileDockVisibility();
   bindInterfaceEvents();
   initScanner();
   loadInventoryData();
 });
+
+function setupMobileDockVisibility() {
+  const dock = document.querySelector(".mobile-dock");
+  if (!dock) return;
+
+  const mobileQuery = window.matchMedia("(max-width: 900px)");
+  const syncDock = () => {
+    dock.hidden = !mobileQuery.matches;
+    dock.setAttribute("aria-hidden", String(!mobileQuery.matches));
+  };
+
+  syncDock();
+  if (typeof mobileQuery.addEventListener === "function") {
+    mobileQuery.addEventListener("change", syncDock);
+  } else if (typeof mobileQuery.addListener === "function") {
+    mobileQuery.addListener(syncDock);
+  }
+}
 
 function bindInterfaceEvents() {
   document.querySelectorAll("[data-view]").forEach((button) => {
