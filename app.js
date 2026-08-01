@@ -12,6 +12,15 @@ const FALLBACK_COLUMNS = [
   "Last_Updated"
 ];
 
+const LABEL_PRESETS = Object.freeze({
+  square: { label: 'Multipurpose / Square · 1" × 1"', widthMm: 25, heightMm: 25, qrMm: 16, previewQrPx: 52, maxFields: 2, compact: true },
+  return: { label: 'Return Address · 3/4" × 2"', widthMm: 19, heightMm: 51, qrMm: 15, previewQrPx: 54, maxFields: 2, compact: true },
+  address: { label: 'Standard Address · 1-1/8" × 3-1/2"', widthMm: 28, heightMm: 89, qrMm: 22, previewQrPx: 72, maxFields: 3 },
+  shipping: { label: 'Shipping / Name Badge · 2-1/8" × 4"', widthMm: 54, heightMm: 101, qrMm: 34, previewQrPx: 96, maxFields: 4 },
+  "large-shipping": { label: 'Large Shipping (4XL 30256) · 2-5/16" × 4"', widthMm: 59, heightMm: 101, qrMm: 38, previewQrPx: 120, maxFields: 4 },
+  "sheet-30": { label: "A4 / Letter Sheet · 30 labels", widthMm: 210, heightMm: 297, qrMm: 16, previewQrPx: 36, maxFields: 3, sheet: true }
+});
+
 let inventoryCache = [];
 let columnOrder = [...FALLBACK_COLUMNS];
 let visibleInventory = [];
@@ -24,6 +33,9 @@ let equipmentFormMode = "edit";
 let editingOriginalId = "";
 let previouslyFocusedElement = null;
 let toastTimer = null;
+let activeQrItems = [];
+let activeQrMode = "bulk";
+let activeLabelFields = ["Equipment_ID", "Name"];
 
 let html5QrcodeScanner = null;
 let scannerStateObserver = null;
@@ -177,7 +189,13 @@ function bindInterfaceEvents() {
   document.querySelectorAll("[data-close-qr-modal]").forEach((element) => {
     element.addEventListener("click", closeQrModal);
   });
-  document.getElementById("print-labels-button").addEventListener("click", () => window.print());
+  document.getElementById("label-size-preset").addEventListener("change", renderQrLabelPreview);
+  document.getElementById("label-orientation").addEventListener("change", renderQrLabelPreview);
+  document.getElementById("label-field-options").addEventListener("change", handleLabelFieldSelection);
+  document.getElementById("print-labels-button").addEventListener("click", () => {
+    renderQrLabelPreview();
+    window.print();
+  });
 
   const manualForm = document.getElementById("manual-search-form");
   const manualInput = document.getElementById("manual-id-input");
@@ -718,61 +736,242 @@ function openQrLabels(items, mode = items.length === 1 ? "single" : "bulk") {
     return;
   }
 
-  const grid = document.getElementById("print-area");
-  grid.replaceChildren();
-  grid.classList.toggle("is-single", mode === "single");
+  activeQrItems = [...items];
+  activeQrMode = mode;
   document.getElementById("qr-modal-title").textContent = mode === "single" ? "Equipment QR label" : "Printable QR label sheet";
   document.getElementById("qr-modal-description").textContent = mode === "single"
-    ? "Preview, download, or print this equipment sticker."
-    : `Ready to print ${items.length} selected equipment labels.`;
-  document.getElementById("print-labels-button").lastChild.textContent = mode === "single" ? "Print Label" : "Print Sheet";
+    ? "Choose an exact label size and orientation before printing."
+    : `Customize and print ${items.length} selected equipment labels.`;
+  document.getElementById("label-size-preset").value = mode === "single" ? "shipping" : "sheet-30";
+  document.getElementById("label-orientation").value = mode === "single" ? "landscape" : "portrait";
+  activeLabelFields = mode === "single"
+    ? ["Equipment_ID", "Name", "Category", "Location"]
+    : ["Equipment_ID", "Name"];
+  document.getElementById("print-labels-button").lastChild.textContent = mode === "single" ? "Print Label" : "Print Labels";
   previouslyFocusedElement = document.activeElement;
-
-  items.forEach((item) => {
-    const equipmentId = safeValue(item.Equipment_ID);
-    const deepLink = getEquipmentDeepLink(equipmentId);
-    const label = document.createElement("article");
-    label.className = "qr-label";
-    label.dataset.deepLink = deepLink;
-
-    const brand = document.createElement("span");
-    brand.className = "qr-label-brand";
-    brand.textContent = "EquipTrack";
-    const title = document.createElement("h3");
-    title.textContent = safeValue(item.Name, "Unnamed equipment");
-    const category = document.createElement("p");
-    category.className = "qr-label-category";
-    category.textContent = safeValue(item.Category, "Uncategorized");
-    const qrCanvas = document.createElement("div");
-    qrCanvas.className = "qr-canvas";
-    const equipmentCode = document.createElement("strong");
-    equipmentCode.className = "qr-equipment-id";
-    equipmentCode.textContent = equipmentId;
-    const downloadButton = document.createElement("button");
-    downloadButton.type = "button";
-    downloadButton.className = "download-qr-button";
-    downloadButton.textContent = "Download PNG";
-    downloadButton.addEventListener("click", () => downloadQrPng(qrCanvas, equipmentId));
-
-    label.append(brand, title, category, qrCanvas, equipmentCode, downloadButton);
-    grid.appendChild(label);
-
-    try {
-      new QRCode(qrCanvas, {
-        text: deepLink,
-        width: 192,
-        height: 192,
-        colorDark: "#151515",
-        colorLight: "#ffffff",
-        correctLevel: QRCode.CorrectLevel.H
-      });
-    } catch (error) {
-      qrCanvas.textContent = error.message;
-      downloadButton.disabled = true;
-    }
-  });
-
+  renderQrLabelPreview();
   openModal(document.getElementById("qr-modal"));
+}
+
+function renderQrLabelPreview() {
+  if (activeQrItems.length === 0 || typeof QRCode === "undefined") return;
+
+  const container = document.getElementById("print-container");
+  const presetKey = document.getElementById("label-size-preset").value;
+  const orientation = document.getElementById("label-orientation").value === "landscape" ? "landscape" : "portrait";
+  const preset = LABEL_PRESETS[presetKey] || LABEL_PRESETS.shipping;
+  const dimensions = getOrientedLabelDimensions(preset, orientation);
+  const preview = getLabelPreviewDimensions(preset, dimensions);
+
+  normalizeActiveLabelFields(preset);
+  renderLabelFieldOptions(preset);
+
+  container.replaceChildren();
+  container.className = "qr-label-grid";
+  container.classList.add(preset.sheet ? "is-sheet" : "is-thermal", `is-${orientation}`, `preset-${presetKey}`);
+  container.classList.toggle("is-single", activeQrMode === "single");
+  container.dataset.preset = presetKey;
+  container.dataset.orientation = orientation;
+  container.dataset.printMode = preset.sheet ? "sheet" : "thermal";
+  container.dataset.labelFields = activeLabelFields.join(",");
+  container.style.setProperty("--print-label-width", `${dimensions.widthMm}mm`);
+  container.style.setProperty("--print-label-height", `${dimensions.heightMm}mm`);
+  container.style.setProperty("--print-qr-size", `${preset.qrMm}mm`);
+  container.style.setProperty("--label-preview-width", `${preview.widthPx}px`);
+  container.style.setProperty("--label-preview-height", `${preview.heightPx}px`);
+  container.style.setProperty("--preview-qr-size", `${preset.previewQrPx}px`);
+
+  if (preset.sheet) renderSheetPages(container, activeQrItems, preset, orientation, dimensions);
+  else activeQrItems.forEach((item) => container.appendChild(createQrLabel(item, preset, orientation)));
+
+  updateLabelSizeReadout(preset, orientation, dimensions);
+  updateDynamicPageRule(preset, orientation, dimensions);
+}
+
+function getLabelFieldCandidates() {
+  return columnOrder.filter((column) => !isSystemManagedColumn(column));
+}
+
+function normalizeActiveLabelFields(preset) {
+  const candidates = getLabelFieldCandidates();
+  const limit = preset.maxFields || 2;
+  activeLabelFields = activeLabelFields.filter((column) => candidates.includes(column)).slice(0, limit);
+  if (activeLabelFields.length === 0 && candidates.length > 0) {
+    activeLabelFields = [candidates.includes("Equipment_ID") ? "Equipment_ID" : candidates[0]];
+  }
+}
+
+function renderLabelFieldOptions(preset) {
+  const options = document.getElementById("label-field-options");
+  const limit = preset.maxFields || 2;
+  const atLimit = activeLabelFields.length >= limit;
+  const fragments = getLabelFieldCandidates().map((column) => {
+    const label = document.createElement("label");
+    label.className = "label-field-choice";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.value = column;
+    checkbox.checked = activeLabelFields.includes(column);
+    checkbox.disabled = atLimit && !checkbox.checked;
+    checkbox.setAttribute("aria-label", `Show ${formatColumnName(column)} on labels`);
+    const text = document.createElement("span");
+    text.textContent = formatColumnName(column);
+    label.append(checkbox, text);
+    return label;
+  });
+  options.replaceChildren(...fragments);
+
+  document.getElementById("label-field-count").textContent = `${activeLabelFields.length} / ${limit} selected`;
+  document.getElementById("label-field-help").textContent = preset.compact
+    ? `This compact label supports up to ${limit} values. The QR code is always included.`
+    : `Choose up to ${limit} values. The QR code and EquipTrack title are always included.`;
+}
+
+function handleLabelFieldSelection(event) {
+  const checkbox = event.target.closest('input[type="checkbox"]');
+  if (!checkbox) return;
+
+  const presetKey = document.getElementById("label-size-preset").value;
+  const preset = LABEL_PRESETS[presetKey] || LABEL_PRESETS.shipping;
+  const limit = preset.maxFields || 2;
+
+  if (checkbox.checked) {
+    if (activeLabelFields.length >= limit) {
+      checkbox.checked = false;
+      showToast(`This label size supports up to ${limit} values.`, "!", true);
+      return;
+    }
+    activeLabelFields.push(checkbox.value);
+  } else {
+    if (activeLabelFields.length === 1) {
+      checkbox.checked = true;
+      showToast("Keep at least one value on the label.", "!", true);
+      return;
+    }
+    activeLabelFields = activeLabelFields.filter((column) => column !== checkbox.value);
+  }
+
+  renderQrLabelPreview();
+}
+
+function renderSheetPages(container, items, preset, orientation, dimensions) {
+  const pageWidthPx = Math.round(dimensions.widthMm * 2.25);
+  const pageHeightPx = Math.round(dimensions.heightMm * 2.25);
+
+  for (let index = 0; index < items.length; index += 30) {
+    const page = document.createElement("section");
+    page.className = "print-sheet-page";
+    page.setAttribute("aria-label", `Label sheet ${Math.floor(index / 30) + 1}`);
+    page.style.setProperty("--sheet-preview-width", `${pageWidthPx}px`);
+    page.style.setProperty("--sheet-preview-height", `${pageHeightPx}px`);
+    page.style.setProperty("--sheet-page-width", `${dimensions.widthMm}mm`);
+    page.style.setProperty("--sheet-page-height", `${dimensions.heightMm}mm`);
+    items.slice(index, index + 30).forEach((item) => page.appendChild(createQrLabel(item, preset, orientation)));
+    container.appendChild(page);
+  }
+}
+
+function createQrLabel(item, preset, orientation) {
+  const equipmentId = safeValue(item.Equipment_ID);
+  const deepLink = getEquipmentDeepLink(equipmentId);
+  const label = document.createElement("article");
+  label.className = "qr-label";
+  label.classList.toggle("is-compact", Boolean(preset.compact));
+  label.classList.add(`is-${orientation}`);
+  label.dataset.deepLink = deepLink;
+  label.dataset.equipmentId = equipmentId;
+
+  const body = document.createElement("div");
+  body.className = "qr-label-body";
+  const qrCanvas = document.createElement("div");
+  qrCanvas.className = "qr-canvas";
+  const details = document.createElement("div");
+  details.className = "qr-label-details";
+  const brand = document.createElement("span");
+  brand.className = "qr-label-brand";
+  brand.textContent = "EquipTrack";
+  const downloadButton = document.createElement("button");
+  downloadButton.type = "button";
+  downloadButton.className = "download-qr-button";
+  downloadButton.textContent = "Download PNG";
+  downloadButton.addEventListener("click", () => downloadQrPng(qrCanvas, equipmentId));
+
+  details.appendChild(brand);
+  activeLabelFields.forEach((column, index) => {
+    const value = safeValue(item[column], "Not set");
+    const field = document.createElement(index === 0 ? "strong" : "span");
+    field.className = "qr-data-field";
+    field.classList.toggle("is-primary", index === 0 || column === "Equipment_ID");
+    field.dataset.column = column;
+    field.textContent = preset.compact || ["Equipment_ID", "Name"].includes(column)
+      ? value
+      : `${formatColumnName(column)}: ${value}`;
+    details.appendChild(field);
+  });
+  body.append(qrCanvas, details);
+  label.append(body, downloadButton);
+
+  try {
+    new QRCode(qrCanvas, {
+      text: deepLink,
+      width: 256,
+      height: 256,
+      colorDark: "#151515",
+      colorLight: "#ffffff",
+      correctLevel: QRCode.CorrectLevel.H
+    });
+  } catch (error) {
+    qrCanvas.textContent = error.message;
+    downloadButton.disabled = true;
+  }
+
+  return label;
+}
+
+function getOrientedLabelDimensions(preset, orientation) {
+  const shortSide = Math.min(preset.widthMm, preset.heightMm);
+  const longSide = Math.max(preset.widthMm, preset.heightMm);
+  if (preset.widthMm === preset.heightMm) return { widthMm: preset.widthMm, heightMm: preset.heightMm };
+  return orientation === "landscape"
+    ? { widthMm: longSide, heightMm: shortSide }
+    : { widthMm: shortSide, heightMm: longSide };
+}
+
+function getLabelPreviewDimensions(preset, dimensions) {
+  if (preset.sheet) {
+    return {
+      widthPx: Math.round(dimensions.widthMm * 2.25),
+      heightPx: Math.round(dimensions.heightMm * 2.25)
+    };
+  }
+
+  const scale = 3.1;
+  return {
+    widthPx: Math.max(96, Math.round(dimensions.widthMm * scale)),
+    heightPx: Math.max(96, Math.round(dimensions.heightMm * scale))
+  };
+}
+
+function updateLabelSizeReadout(preset, orientation, dimensions) {
+  const readout = document.getElementById("label-size-readout");
+  const orientationLabel = orientation[0].toUpperCase() + orientation.slice(1);
+  readout.textContent = preset.sheet
+    ? `${orientationLabel} A4 - ${dimensions.widthMm} x ${dimensions.heightMm}mm - 3 columns x 10 rows`
+    : `${orientationLabel} - ${dimensions.widthMm} x ${dimensions.heightMm}mm - one sticker per printed page`;
+}
+
+function updateDynamicPageRule(preset, orientation, dimensions) {
+  let style = document.getElementById("dynamic-print-page-style");
+  if (!style) {
+    style = document.createElement("style");
+    style.id = "dynamic-print-page-style";
+    document.head.appendChild(style);
+  }
+
+  const pageSize = preset.sheet
+    ? `A4 ${orientation}`
+    : `${dimensions.widthMm}mm ${dimensions.heightMm}mm`;
+  style.textContent = `@media print { @page { size: ${pageSize}; margin: 0; } }`;
 }
 
 function getEquipmentDeepLink(equipmentId) {

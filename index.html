@@ -260,7 +260,33 @@
         <div><span class="modal-kicker">Label generator</span><h2 id="qr-modal-title">QR equipment labels</h2><p id="qr-modal-description">Print labels or download an individual QR code as PNG.</p></div>
         <button class="icon-button" type="button" data-close-qr-modal aria-label="Close QR labels"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l14 14M19 5 5 19" /></svg></button>
       </header>
-      <div class="qr-label-grid" id="print-area"></div>
+      <section class="label-config-panel" aria-label="Label print settings">
+        <label class="label-config-field" for="label-size-preset">
+          <span>Label size</span>
+          <select id="label-size-preset">
+            <option value="square">Multipurpose / Square · 1&quot; × 1&quot; (25 × 25mm)</option>
+            <option value="return">Return Address · 3/4&quot; × 2&quot; (19 × 51mm)</option>
+            <option value="address">Standard Address · 1-1/8&quot; × 3-1/2&quot; (28 × 89mm)</option>
+            <option value="shipping">Shipping / Name Badge · 2-1/8&quot; × 4&quot; (54 × 101mm)</option>
+            <option value="large-shipping">Large Shipping (4XL 30256) · 2-5/16&quot; × 4&quot; (59 × 101mm)</option>
+            <option value="sheet-30">A4 / Letter Sheet · 30 labels (3 × 10 grid)</option>
+          </select>
+        </label>
+        <label class="label-config-field" for="label-orientation">
+          <span>Orientation</span>
+          <select id="label-orientation">
+            <option value="portrait">Portrait</option>
+            <option value="landscape">Landscape</option>
+          </select>
+        </label>
+        <div class="label-size-readout" id="label-size-readout" aria-live="polite"></div>
+        <fieldset class="label-field-selector">
+          <legend>Label data <span id="label-field-count">0 selected</span></legend>
+          <div class="label-field-options" id="label-field-options"></div>
+          <small id="label-field-help">Choose which equipment values appear beside the QR code.</small>
+        </fieldset>
+      </section>
+      <div class="qr-label-grid" id="print-container" aria-live="polite"></div>
       <footer class="modal-actions qr-modal-actions">
         <button class="button button-secondary" type="button" data-close-qr-modal>Close</button>
         <button class="button button-primary" id="print-labels-button" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9V3h12v6M6 18H4v-7h16v7h-2M7 15h10v6H7z" /></svg>Print Sheet</button>
