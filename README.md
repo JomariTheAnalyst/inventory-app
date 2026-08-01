@@ -1,4 +1,4 @@
-# Equipment Inventory System
+# INVENTORY
 
 A lightweight, mobile-friendly equipment inventory dashboard backed by Google Sheets and Google Apps Script.
 
@@ -7,6 +7,8 @@ A lightweight, mobile-friendly equipment inventory dashboard backed by Google Sh
 - Live equipment data from Google Sheets
 - Search and status filtering
 - Responsive desktop and mobile inventory views
+- Mobile inventory table with horizontal scrolling and sticky key columns
+- Floating mobile navigation for Dashboard, Scan QR, Add, and History
 - Click any equipment row or its three-dot action to edit it
 - Add new equipment records
 - Dynamic fields based on Sheet columns
@@ -14,6 +16,7 @@ A lightweight, mobile-friendly equipment inventory dashboard backed by Google Sh
 - QR camera scanner, QR image scanning, and manual ID lookup
 - Printable and downloadable equipment QR labels
 - CSV export for visible or selected equipment
+- Recent equipment updates derived from the automatic `Last_Updated` field
 
 ## Technology
 

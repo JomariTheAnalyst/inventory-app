@@ -48,6 +48,7 @@ function bindInterfaceEvents() {
 
   document.getElementById("add-equipment-button").addEventListener("click", () => openEquipmentModal("create"));
   document.getElementById("mobile-add-button").addEventListener("click", () => openEquipmentModal("create"));
+  document.getElementById("mobile-dock-add").addEventListener("click", () => openEquipmentModal("create"));
   document.getElementById("refresh-data-button").addEventListener("click", () => loadInventoryData());
   document.getElementById("inventory-search").addEventListener("input", (event) => {
     searchQuery = event.target.value.trim().toLowerCase();
@@ -98,6 +99,26 @@ function bindInterfaceEvents() {
   document.getElementById("inventory-table-body").addEventListener("keydown", (event) => {
     if (event.key !== "Enter" && event.key !== " ") return;
     if (event.target.closest("button, input, a, label")) return;
+    const row = event.target.closest("tr[data-equipment-id]");
+    if (!row) return;
+    event.preventDefault();
+    const item = inventoryCache.find(
+      (candidate) => safeValue(candidate.Equipment_ID) === row.dataset.equipmentId
+    );
+    if (item) openEquipmentModal("edit", item);
+  });
+
+  document.getElementById("history-table-body").addEventListener("click", (event) => {
+    const row = event.target.closest("tr[data-equipment-id]");
+    if (!row) return;
+    const item = inventoryCache.find(
+      (candidate) => safeValue(candidate.Equipment_ID) === row.dataset.equipmentId
+    );
+    if (item) openEquipmentModal("edit", item);
+  });
+
+  document.getElementById("history-table-body").addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
     const row = event.target.closest("tr[data-equipment-id]");
     if (!row) return;
     event.preventDefault();
@@ -158,9 +179,10 @@ function bindInterfaceEvents() {
 }
 
 function switchView(viewName) {
-  currentView = viewName === "scanner" ? "scanner" : "inventory";
+  currentView = ["inventory", "scanner", "history"].includes(viewName) ? viewName : "inventory";
   document.getElementById("view-inventory").hidden = currentView !== "inventory";
   document.getElementById("view-scanner").hidden = currentView !== "scanner";
+  document.getElementById("view-history").hidden = currentView !== "history";
 
   document.querySelectorAll("[data-view]").forEach((button) => {
     const isActive = button.dataset.view === currentView;
@@ -171,6 +193,7 @@ function switchView(viewName) {
 
   if (currentView === "scanner") resumeScanner();
   else pauseScanner();
+  if (currentView === "history") renderHistory();
 
   closeSidebar();
   window.scrollTo({ top: 0, behavior: "smooth" });
@@ -209,6 +232,7 @@ async function loadInventoryData(options = {}) {
     );
     renderStatusCounts();
     renderInventory();
+    renderHistory();
     setConnectionState("Sheet live", "online");
     document.getElementById("last-updated").textContent = `Updated ${formatTime(new Date())}`;
   } catch (error) {
@@ -261,6 +285,70 @@ function renderInventory() {
   updateSelectionInterface();
   document.getElementById("result-summary").textContent =
     `Showing ${visibleInventory.length} of ${inventoryCache.length} equipment records`;
+}
+
+function renderHistory() {
+  const body = document.getElementById("history-table-body");
+  const summary = document.getElementById("history-summary");
+  if (!body || !summary) return;
+
+  const updates = [...inventoryCache].sort((a, b) => {
+    const aTime = new Date(safeValue(a.Last_Updated)).getTime() || 0;
+    const bTime = new Date(safeValue(b.Last_Updated)).getTime() || 0;
+    return bTime - aTime;
+  });
+
+  if (updates.length === 0) {
+    const row = document.createElement("tr");
+    row.className = "message-row";
+    const cell = document.createElement("td");
+    cell.colSpan = 5;
+    cell.textContent = "No recent equipment updates are available.";
+    row.appendChild(cell);
+    body.replaceChildren(row);
+    summary.textContent = "No update history available";
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  updates.forEach((item) => {
+    const equipmentId = safeValue(item.Equipment_ID, "Unknown ID");
+    const row = document.createElement("tr");
+    row.className = "history-row";
+    row.dataset.equipmentId = equipmentId;
+    row.tabIndex = 0;
+    row.setAttribute("aria-label", `Edit ${equipmentId}`);
+
+    const updatedCell = document.createElement("td");
+    updatedCell.textContent = formatHistoryDate(item.Last_Updated);
+
+    const equipmentCell = document.createElement("td");
+    const equipmentWrap = document.createElement("span");
+    equipmentWrap.className = "history-equipment";
+    const equipmentName = document.createElement("strong");
+    equipmentName.textContent = safeValue(item.Name, "Unnamed equipment");
+    const equipmentCode = document.createElement("span");
+    equipmentCode.textContent = equipmentId;
+    equipmentWrap.append(equipmentName, equipmentCode);
+    equipmentCell.appendChild(equipmentWrap);
+
+    const statusCell = document.createElement("td");
+    const statusPill = document.createElement("span");
+    statusPill.className = `status-pill ${statusClassName(safeValue(item.Status))}`;
+    statusPill.textContent = safeValue(item.Status, "Not set");
+    statusCell.appendChild(statusPill);
+
+    const locationCell = document.createElement("td");
+    locationCell.textContent = safeValue(item.Location, "—");
+    const assignedCell = document.createElement("td");
+    assignedCell.textContent = safeValue(item.Assigned_To, "Unassigned");
+
+    row.append(updatedCell, equipmentCell, statusCell, locationCell, assignedCell);
+    fragment.appendChild(row);
+  });
+
+  body.replaceChildren(fragment);
+  summary.textContent = `Showing ${updates.length} recent equipment updates`;
 }
 
 function renderTableHead() {
@@ -1011,6 +1099,20 @@ function sanitizeFileName(value) {
 
 function formatTime(date) {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatHistoryDate(value) {
+  const rawValue = safeValue(value);
+  if (!rawValue) return "Not recorded";
+  const date = new Date(rawValue);
+  if (Number.isNaN(date.getTime())) return rawValue;
+  return date.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
 }
 
 function showToast(message, icon = "✓", isError = false) {
